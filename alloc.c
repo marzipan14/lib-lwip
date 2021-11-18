@@ -34,6 +34,9 @@
 #include <uk/alloc.h>
 #include <stddef.h>
 
+/* In theory, these calls to uk_alloc_get_default() should return
+ * lwip's memory allocator. But that's theory... */
+
 void *sys_malloc(size_t size)
 {
 	return uk_malloc(uk_alloc_get_default(), size);

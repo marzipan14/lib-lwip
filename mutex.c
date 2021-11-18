@@ -36,6 +36,7 @@
 #include <lwip/sys.h>
 
 #include <uk/essentials.h>
+#include <flexos/isolation.h>
 
 /**
  * Initializes a new semaphore. The "count" argument specifies
@@ -43,7 +44,7 @@
  */
 err_t sys_mutex_new(sys_mutex_t *mtx)
 {
-	uk_mutex_init(&mtx->mtx);
+	flexos_gate(libuklock, uk_mutex_init, &mtx->mtx);
 	mtx->valid = 1;
 	return ERR_OK;
 }
@@ -65,11 +66,11 @@ void sys_mutex_free(sys_mutex_t *mtx)
 
 void sys_mutex_lock(sys_mutex_t *mtx)
 {
-	uk_mutex_lock(&mtx->mtx);
+	flexos_gate(liblock, uk_mutex_lock, &mtx->mtx);
 }
 
 /* Signals on mutex. */
 void sys_mutex_unlock(sys_mutex_t *mtx)
 {
-	uk_mutex_unlock(&mtx->mtx);
+	flexos_gate(liblock, uk_mutex_unlock, &mtx->mtx);
 }

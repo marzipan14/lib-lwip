@@ -34,6 +34,7 @@
  */
 
 #include <uk/config.h>
+#include <flexos/isolation.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -95,6 +96,16 @@ struct lwip_netdev_data {
 #endif /* CONFIG_HAVE_SCHED */
 };
 
+/* NOTE FLEXOS: this has to be executed in netdev's domain to avoid sharing
+ * the entire netdev structure. */
+#ifndef CONFIG_LIBFLEXOS_VMEPT
+static
+#endif
+struct lwip_netdev_data *_retrieve_scratchpad(struct uk_netdev *dev)
+{
+	return (struct lwip_netdev_data *)dev->scratch_pad;
+}
+
 /*
  * Compile-time assertion that ensures that the uknetdev scratch pad can fit
  * `struct lwip_netdev_data`. In case this is not fulfilled, please adopt
@@ -143,7 +154,8 @@ static err_t uknetdev_output(struct netif *nf, struct pbuf *p)
 	UK_ASSERT(nf);
 	dev = netif_to_uknetdev(nf);
 	UK_ASSERT(dev);
-	lwip_data = (struct lwip_netdev_data *) dev->scratch_pad;
+
+	flexos_gate_r(uknetdev, lwip_data, _retrieve_scratchpad, dev);
 	UK_ASSERT(lwip_data);
 
 	nb = uk_netbuf_alloc_buf(lwip_data->pkt_a,
@@ -177,7 +189,7 @@ static err_t uknetdev_output(struct netif *nf, struct pbuf *p)
 
 	/* Transmit packet */
 	do {
-		ret = uk_netdev_tx_one(dev, 0, nb);
+		flexos_gate_r(uknetdev, ret, uk_netdev_tx_one, dev, 0, nb);
 	} while (uk_netdev_status_notready(ret));
 	if (unlikely(ret < 0)) {
 		LWIP_DEBUGF(NETIF_DEBUG,
@@ -198,11 +210,12 @@ static err_t uknetdev_output(struct netif *nf, struct pbuf *p)
 	return ERR_OK;
 }
 
-static void uknetdev_input(struct uk_netdev *dev,
-			   uint16_t queue_id __unused, void *argp)
+__attribute__((libvfscore_callback))
+static void _uknetdev_input(struct uk_netdev *dev,
+			   uint16_t queue_id, void *argp)
 {
 	struct netif *nf = (struct netif *) argp;
-	struct uk_netbuf *nb;
+	struct uk_netbuf *nb __attribute__((flexos_whitelist));
 	struct pbuf *p;
 	err_t err;
 	int ret;
@@ -214,7 +227,7 @@ static void uknetdev_input(struct uk_netdev *dev,
 	LWIP_DEBUGF(NETIF_DEBUG, ("%s: %c%c%u: Poll receive queue...\n",
 				  __func__, nf->name[0], nf->name[1], nf->num));
 	do {
-		ret = uk_netdev_rx_one(dev, 0, &nb);
+		flexos_gate_r(uknetdev, ret, uk_netdev_rx_one, dev, 0, &nb);
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: %c%c%u: Input status %d (%c%c%c)\n",
 			     __func__, nf->name[0], nf->name[1], nf->num, ret,
@@ -233,7 +246,8 @@ static void uknetdev_input(struct uk_netdev *dev,
 			 * currently, so we will throw an error message, bring
 			 * the interface down, and leave our loop.
 			 */
-			uk_pr_crit("%c%c%u: Receive error %d. Stopping interface...\n",
+			flexos_gate(ukdebug, uk_pr_crit,
+				   FLEXOS_SHARED_LITERAL("%c%c%u: Receive error %d. Stopping interface...\n"),
 				   nf->name[0], nf->name[1], nf->num, ret);
 			netif_set_down(nf);
 			break;
@@ -266,7 +280,7 @@ static void uknetdev_input(struct uk_netdev *dev,
 					    ("%s: %c%c%u: lwIP's input queue full: yielding and trying once again...\n",
 					     __func__, nf->name[0], nf->name[1],
 					     nf->num));
-				uk_sched_yield();
+				flexos_gate(libuksched, uk_sched_yield);
 				err = nf->input(p, nf);
 				if (likely(err == ERR_OK))
 					continue;
@@ -276,11 +290,21 @@ static void uknetdev_input(struct uk_netdev *dev,
 			/*
 			 * Drop the packet that we could not send to the stack
 			 */
-			uk_pr_err("%c%c%u: Failed to forward packet to lwIP: %d\n",
+			flexos_gate(ukdebug, uk_pr_err,
+				  FLEXOS_SHARED_LITERAL("%c%c%u: Failed to forward packet to lwIP: %d\n"),
 				  nf->name[0], nf->name[1], nf->num, err);
 			uk_netbuf_free_single(nb);
 		}
 	} while (uk_netdev_status_more(ret));
+}
+
+static void uknetdev_input(struct uk_netdev *dev,
+			   uint16_t queue_id, void *argp)
+{
+#if CONFIG_LIBFLEXOS_INTELPKU
+	wrpkru(0x3ffffffc);
+#endif
+	_uknetdev_input(dev, queue_id, argp);
 }
 
 /*
@@ -306,7 +330,8 @@ void uknetdev_poll(struct netif *nf)
 	dev = netif_to_uknetdev(nf);
 	UK_ASSERT(dev);
 
-	uknetdev_input(dev, 0, nf);
+	/* do not go through gate (hence the '_') */
+	__uknetdev_input(dev, 0, nf);
 }
 
 #ifdef CONFIG_LWIP_NOTHREADS
@@ -329,14 +354,26 @@ void uknetdev_poll_all(void)
 
 #else /* CONFIG_LWIP_NOTHREADS */
 
-static void _poll_netif(void *arg)
+/* FIXME FLEXOS this is not really a libc callback */
+__attribute__((libc_callback))
+static void __poll_netif(void *arg)
 {
 	struct netif *nf = (struct netif *) arg;
 
 	while (1) {
+		/* NOTE: we run domain 0 */
 		uknetdev_poll(nf);
-		uk_sched_yield();
+		flexos_gate(libuksched, uk_sched_yield);
 	}
+}
+
+static void _poll_netif(void *arg)
+{
+#if CONFIG_LIBFLEXOS_INTELPKU
+	/* FIXME FLEXOS: can we do this differently? */
+	wrpkru(0x3ffffffc);
+#endif /* CONFIG_LIBFLEXOS_INTELPKU */
+	__poll_netif(arg);
 }
 
 static void uknetdev_updown(struct netif *nf)
@@ -348,13 +385,14 @@ static void uknetdev_updown(struct netif *nf)
 	UK_ASSERT(nf);
 	dev = netif_to_uknetdev(nf);
 	UK_ASSERT(dev);
-	lwip_data = (struct lwip_netdev_data *)dev->scratch_pad;
+
+	flexos_gate_r(uknetdev, lwip_data, _retrieve_scratchpad, dev);
 
 	/* Enable and disable interrupts according to netif's up/down status */
 
 	if (nf->flags & NETIF_FLAG_UP) {
 		if (uk_netdev_rxintr_supported(lwip_data->dev_info.features)) {
-			ret = uk_netdev_rxq_intr_enable(dev, 0);
+			flexos_gate_r(uknetdev, ret, uk_netdev_rxq_intr_enable, dev, 0);
 			if (ret < 0) {
 				LWIP_DEBUGF(NETIF_DEBUG,
 						("%s: %c%c%u: Failed to enable rx interrupt mode on netdev %u\n",
@@ -386,13 +424,15 @@ static void uknetdev_updown(struct netif *nf)
 					("%s: Poll receive enabled\n",
 					 __func__));
 			/* Create a thread */
-			lwip_data->sched = uk_sched_get_default();
+			flexos_gate_r(libuksched, lwip_data->sched, uk_sched_get_default);
 			UK_ASSERT(lwip_data->sched);
-			lwip_data->poll_thread =
-				uk_sched_thread_create(lwip_data->sched, NULL,
+			flexos_gate_r(libuksched, lwip_data->poll_thread,
+				uk_sched_thread_create, lwip_data->sched, NULL,
 						       NULL, _poll_netif, nf);
 #else /* CONFIG_HAVE_SCHED */
-			uk_pr_warn("The netdevice does not support interrupt. Ensure the netdevice is polled to receive packets");
+			flexos_gate(ukdebug, uk_pr_warn, FLEXOS_SHARED_LITERAL(
+				"The netdevice does not support interrupt. Ensure the netdevice "
+				"is polled to receive packets"));
 #endif /* CONFIG_HAVE_SCHED */
 		}
 	} else {
@@ -430,10 +470,11 @@ UK_CTASSERT(sizeof(struct lwip_netdev_data) <= CONFIG_LWIP_UKNETDEV_SCRATCH);
 err_t uknetdev_init(struct netif *nf)
 {
 	struct uk_alloc *a = NULL;
-	struct uk_netdev *dev;
-	struct uk_netdev_conf dev_conf;
-	struct uk_netdev_rxqueue_conf rxq_conf;
-	struct uk_netdev_txqueue_conf txq_conf;
+	struct uk_netdev *dev __attribute__((flexos_whitelist));
+	struct uk_netdev_conf dev_conf __attribute__((flexos_whitelist));
+	struct uk_netdev_rxqueue_conf rxq_conf __attribute__((flexos_whitelist));
+	struct uk_netdev_txqueue_conf txq_conf __attribute__((flexos_whitelist));
+	enum uk_netdev_state netdev_state;
 	struct lwip_netdev_data *lwip_data;
 	const struct uk_hwaddr *hwaddr;
 	unsigned int i;
@@ -443,13 +484,15 @@ err_t uknetdev_init(struct netif *nf)
 	dev = netif_to_uknetdev(nf);
 	UK_ASSERT(dev);
 
-	lwip_data = (struct lwip_netdev_data *)dev->scratch_pad;
+	flexos_gate_r(uknetdev, lwip_data, _retrieve_scratchpad, dev);
 
 	LWIP_ASSERT("uknetdev needs an input callback (netif_input or tcpip_input)",
 		    nf->input != NULL);
 
+	flexos_gate_r(uknetdev, netdev_state, uk_netdev_state_get, dev);
+
 	/* Netdev has to be in unconfigured state */
-	if (uk_netdev_state_get(dev) != UK_NETDEV_UNCONFIGURED) {
+	if (netdev_state != UK_NETDEV_UNCONFIGURED) {
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: Netdev %u not in uncofigured state\n",
 			     __func__, uk_netdev_id_get(dev)));
@@ -468,15 +511,17 @@ err_t uknetdev_init(struct netif *nf)
 	 *       attaching to lwip, we require another init function that skips
 	 *       this initialization steps.
 	 */
-	a = uk_alloc_get_default();
-	if (!a)
+	a = flexos_shared_alloc; /* FIXME HACK HACK HACK */
+	if (!a) {
 		return ERR_MEM;
+	}
 
 	/* Get device information */
-	uk_netdev_info_get(dev, &lwip_data->dev_info);
+	flexos_gate(uknetdev, uk_netdev_info_get, dev, &lwip_data->dev_info);
 	if (!lwip_data->dev_info.max_rx_queues
-	    || !lwip_data->dev_info.max_tx_queues)
+	    || !lwip_data->dev_info.max_tx_queues) {
 		return ERR_IF;
+	}
 #if CONFIG_LWIP_UKNETDEV_POLLONLY
 	/* Unset receive interrupt support: We force polling mode */
 	lwip_data->dev_info.features &= ~UK_FEATURE_RXQ_INTR_AVAILABLE;
@@ -496,7 +541,7 @@ err_t uknetdev_init(struct netif *nf)
 	 */
 	dev_conf.nb_rx_queues = 1;
 	dev_conf.nb_tx_queues = 1;
-	ret = uk_netdev_configure(dev, &dev_conf);
+	flexos_gate_r(uknetdev, ret, uk_netdev_configure, dev, &dev_conf);
 	if (ret < 0) {
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: %c%c%u: Failed to configure netdev %u\n",
@@ -522,13 +567,14 @@ err_t uknetdev_init(struct netif *nf)
 	rxq_conf.callback = uknetdev_input;
 	rxq_conf.callback_cookie = nf;
 #ifdef CONFIG_LIBUKNETDEV_DISPATCHERTHREADS
-	rxq_conf.s = uk_sched_get_default();
-	if (!rxq_conf.s)
+	flexos_gate_r(libuksched, rxq_conf.s, uk_sched_get_default);
+	if (!rxq_conf.s) {
 		return ERR_IF;
+	}
 
 #endif /* CONFIG_LIBUKNETDEV_DISPATCHERTHREADS */
 #endif /* CONFIG_LWIP_NOTHREADS */
-	ret = uk_netdev_rxq_configure(dev, 0, 0, &rxq_conf);
+	flexos_gate_r(uknetdev, ret, uk_netdev_rxq_configure, dev, 0, 0, &rxq_conf);
 	if (ret < 0) {
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: %c%c%u: Failed to configure rx queue of netdev %u\n",
@@ -542,7 +588,7 @@ err_t uknetdev_init(struct netif *nf)
 	 * use driver default descriptors
 	 */
 	txq_conf.a = a;
-	ret = uk_netdev_txq_configure(dev, 0, 0, &txq_conf);
+	flexos_gate_r(uknetdev, ret, uk_netdev_txq_configure, dev, 0, 0, &txq_conf);
 	if (ret < 0) {
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: %c%c%u: Failed to configure tx queue of netdev %u\n",
@@ -552,7 +598,7 @@ err_t uknetdev_init(struct netif *nf)
 	}
 
 	/* Start interface */
-	ret = uk_netdev_start(dev);
+	flexos_gate_r(uknetdev, ret, uk_netdev_start, dev)
 	if (ret < 0) {
 		LWIP_DEBUGF(NETIF_DEBUG,
 			    ("%s: %c%c%u: Failed to start netdev %u\n",
@@ -607,7 +653,8 @@ err_t uknetdev_init(struct netif *nf)
 
 	/* MAC address */
 	UK_ASSERT(NETIF_MAX_HWADDR_LEN >= UK_NETDEV_HWADDR_LEN);
-	hwaddr = uk_netdev_hwaddr_get(dev);
+
+	flexos_gate_r(uknetdev, hwaddr, uk_netdev_hwaddr_get, dev);
 	UK_ASSERT(hwaddr);
 	nf->hwaddr_len = UK_NETDEV_HWADDR_LEN;
 	for (i = 0; i < UK_NETDEV_HWADDR_LEN; ++i)
@@ -625,7 +672,7 @@ err_t uknetdev_init(struct netif *nf)
 #endif /* UK_NETDEV_HWADDR_LEN */
 
 	/* Maximum transfer unit */
-	nf->mtu = uk_netdev_mtu_get(dev);
+	flexos_gate_r(uknetdev, nf->mtu, uk_netdev_mtu_get, dev);
 	UK_ASSERT(nf->mtu);
 	LWIP_DEBUGF(NETIF_DEBUG,
 		    ("%s: %c%c%u: MTU: %u\n",
@@ -684,7 +731,8 @@ struct netif *uknetdev_addif(struct uk_netdev *n
 	struct netif *nf;
 	struct netif *ret;
 
-	nf = mem_calloc(1, sizeof(*nf));
+	/* FIXME: we might not actually want to share this... */
+	nf = flexos_calloc_whitelist(1, sizeof(*nf));
 	if (!nf)
 		return NULL;
 

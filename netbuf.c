@@ -33,6 +33,7 @@
  * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 
+#include <flexos/isolation.h>
 #include "netbuf.h"
 #include <string.h>
 
@@ -46,7 +47,7 @@ static void _netbuf_free(struct pbuf *p)
 	struct uk_netbuf *nb;
 
 	nb = lwip_pbuf_to_netbuf(p);
-	uk_netbuf_free_single(nb);
+	flexos_gate(uknetdev, uk_netbuf_free_single, nb);
 }
 
 struct uk_netbuf *lwip_alloc_netbuf(struct uk_alloc *a, size_t alloc_size,

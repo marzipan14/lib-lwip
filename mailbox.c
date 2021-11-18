@@ -31,6 +31,7 @@
  * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 
+#include <flexos/isolation.h>
 #include <uk/mbox.h>
 #include <uk/arch/time.h>
 #include <lwip/sys.h>
@@ -44,9 +45,9 @@ err_t sys_mbox_new(sys_mbox_t *mbox, int size)
 		size = 32;
 
 	UK_ASSERT(mbox);
-	mbox->a = uk_alloc_get_default();
+	mbox->a = flexos_shared_alloc; /* we have to share this */
 	UK_ASSERT(mbox->a);
-	mbox->mbox = uk_mbox_create(mbox->a, size);
+	flexos_gate_r(ukmpi, mbox->mbox, uk_mbox_create, mbox->a, size);
 	if (!mbox->mbox)
 		return ERR_MEM;
 	mbox->valid = 1;
@@ -75,7 +76,7 @@ void sys_mbox_free(sys_mbox_t *mbox)
 {
 	UK_ASSERT(sys_mbox_valid(mbox));
 
-	uk_mbox_free(mbox->a, mbox->mbox);
+	flexos_gate(ukmpi, uk_mbox_free, mbox->a, mbox->mbox);
 	sys_mbox_set_invalid(mbox);
 }
 
@@ -85,19 +86,22 @@ void sys_mbox_post(sys_mbox_t *mbox, void *msg)
 	UK_ASSERT(sys_mbox_valid(mbox));
 
 	if (!msg) {
-		uk_pr_debug("Ignored posting NULL message");
+		flexos_gate(ukdebug, uk_pr_debug, FLEXOS_SHARED_LITERAL("Ignored posting NULL message"));
 		return;
 	}
 
-	uk_mbox_post(mbox->mbox, msg);
+	flexos_gate(ukmpi, uk_mbox_post, mbox->mbox, msg);
 }
 
 /* Try to post "msg" to the mailbox. */
 err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
 {
 	UK_ASSERT(sys_mbox_valid(mbox));
+	int ret;
 
-	if (uk_mbox_post_try(mbox->mbox, msg) < 0)
+	flexos_gate_r(ukmpi, ret, uk_mbox_post_try, mbox->mbox, msg);
+
+	if (ret < 0)
 		return ERR_MEM;
 	return ERR_OK;
 }
@@ -106,8 +110,11 @@ err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
 err_t sys_mbox_trypost_fromisr(sys_mbox_t *mbox, void *msg)
 {
 	UK_ASSERT(sys_mbox_valid(mbox));
+	int ret;
 
-	if (uk_mbox_post_try(mbox->mbox, msg) < 0)
+	flexos_gate_r(ukmpi, ret, uk_mbox_post_try, mbox->mbox, msg);
+
+	if (ret < 0)
 		return ERR_MEM;
 	return ERR_OK;
 }
@@ -126,21 +133,25 @@ err_t sys_mbox_trypost_fromisr(sys_mbox_t *mbox, void *msg)
  */
 u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout)
 {
-	__nsec nsret;
+	__nsec nsret, nsret2;
+	void *msg_cpy __attribute__((flexos_whitelist));
 
 	UK_ASSERT(sys_mbox_valid(mbox));
 
 	if (timeout == 0) {
-		nsret = ukplat_monotonic_clock();
-		uk_mbox_recv(mbox->mbox, msg);
-		nsret = ukplat_monotonic_clock() - nsret;
+		flexos_gate_r(ukplat, nsret, ukplat_monotonic_clock);
+		flexos_gate(ukmpi, uk_mbox_recv, mbox->mbox, &msg_cpy);
+		flexos_gate_r(ukplat, nsret2, ukplat_monotonic_clock);
+		nsret = nsret2 - nsret;
 	} else {
-		nsret = uk_mbox_recv_to(mbox->mbox, msg,
+		flexos_gate_r(ukmpi, nsret, uk_mbox_recv_to, mbox->mbox, &msg_cpy,
 					ukarch_time_msec_to_nsec((__nsec)
-								 timeout));
+					timeout));
 		if (unlikely(nsret == __NSEC_MAX))
 			return SYS_ARCH_TIMEOUT;
 	}
+	if (msg)
+		*msg = msg_cpy;
 	return (u32_t) ukarch_time_nsec_to_msec(nsret);
 }
 
@@ -158,11 +169,14 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout)
  */
 u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg)
 {
-	void *rmsg;
+	void *rmsg __attribute__((flexos_whitelist));
+	int ret;
 
 	UK_ASSERT(sys_mbox_valid(mbox));
 
-	if (uk_mbox_recv_try(mbox->mbox, &rmsg) < 0)
+	flexos_gate_r(ukmpi, ret, uk_mbox_recv_try, mbox->mbox, &rmsg);
+
+	if (ret < 0)
 		return SYS_MBOX_EMPTY;
 
 	if (msg)

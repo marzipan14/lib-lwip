@@ -142,7 +142,7 @@ int getnameinfo(const struct sockaddr *restrict sa, socklen_t sl,
 	}
 
 	if (serv && servlen) {
-		if (snprintf(buf, sizeof(buf), "%d",
+		if (snprintf(buf, sizeof(buf), FLEXOS_SHARED_LITERAL("%d"),
 			ntohs(((struct sockaddr_in *) sa)->sin_port)) >= (int) servlen)
 			return EAI_OVERFLOW;
 		strcpy(serv, buf);

@@ -34,6 +34,7 @@
 #include <uk/semaphore.h>
 #include <uk/arch/time.h>
 #include <lwip/sys.h>
+#include <flexos/isolation.h>
 
 #include <uk/essentials.h>
 
@@ -43,7 +44,7 @@
  */
 err_t sys_sem_new(sys_sem_t *sem, u8_t count)
 {
-	uk_semaphore_init(&sem->sem, (long) count);
+	flexos_gate(libuklock, uk_semaphore_init, &sem->sem, (long) count);
 	sem->valid = 1;
 	return ERR_OK;
 }
@@ -66,7 +67,16 @@ void sys_sem_free(sys_sem_t *sem)
 /* Signals a semaphore. */
 void sys_sem_signal(sys_sem_t *sem)
 {
-	uk_semaphore_up(&sem->sem);
+	flexos_gate(uklock, uk_semaphore_up, &sem->sem);
+}
+
+/* NOTE FLEXOS: for simplicity purposes we execute this in uklock's domain,
+ * but this should probably done with individual gates if uklock is isolated.
+ */
+static inline __nsec sys_arch_sem_wait_helper(volatile struct uk_semaphore *s) {
+	__nsec nsret = ukplat_monotonic_clock();
+	uk_semaphore_down(s);
+	return ukplat_monotonic_clock() - nsret;
 }
 
 /**
@@ -81,22 +91,23 @@ void sys_sem_signal(sys_sem_t *sem)
  * SYS_ARCH_TIMEOUT. If the thread didn't have to wait for the semaphore
  * (i.e., it was already signaled), the function may return zero.
  */
+#pragma GCC push_options
+#pragma GCC optimize("O0")
 u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
 {
 	__nsec nsret;
+	volatile struct uk_semaphore *s = &((volatile sys_sem_t *) sem)->sem;
 
-	uk_pr_debug("sys_arch_sem_wait(%p, %"PRIu32")\n", sem, timeout);
+	flexos_gate(ukdebug, uk_pr_debug, FLEXOS_SHARED_LITERAL("sys_arch_sem_wait(%p, %lu)\n"), sem, timeout);
 	if (timeout == 0) {
-		nsret = ukplat_monotonic_clock();
-		uk_semaphore_down(&sem->sem);
-		nsret = ukplat_monotonic_clock() - nsret;
+		flexos_gate_r(uklock, nsret, sys_arch_sem_wait_helper, s);
 	} else {
-		nsret = uk_semaphore_down_to(&sem->sem,
-					     ukarch_time_msec_to_nsec((__nsec)
-								      timeout));
+		flexos_gate_r(uklock, nsret, uk_semaphore_down_to, s,
+					ukarch_time_msec_to_nsec((__nsec) timeout));
 		if (unlikely(nsret == __NSEC_MAX))
 			return SYS_ARCH_TIMEOUT;
 	}
 
 	return (u32_t) ukarch_time_nsec_to_msec(nsret);
 }
+#pragma GCC pop_options

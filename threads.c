@@ -31,6 +31,7 @@
  * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 
+#include <flexos/isolation.h>
 #include <uk/arch/limits.h>
 #include <uk/sched.h>
 #include <uk/thread.h>
@@ -54,6 +55,6 @@ sys_thread_t sys_thread_new(const char *name, lwip_thread_fn thread, void *arg,
 		UK_CRASH("Can't create lwIP thread: stack size %u is too large (> %llu). Dying...\n",
 			 stacksize, __STACK_SIZE);
 	}
-	t = uk_thread_create(name, thread, arg);
+	flexos_gate_r(libuksched, t, uk_thread_create, name, thread, arg);
 	return t;
 }

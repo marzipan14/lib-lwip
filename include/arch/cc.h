@@ -59,7 +59,14 @@
 #define ETH_PAD_SIZE 0
 
 /* rand */
-#define LWIP_RAND() uk_swrand_randr()
+#include <flexos/isolation.h>
+static __u32 __maybe_unused isolated_rand(void)
+{
+	__u32 randn;
+	flexos_gate_r(ukswrand, randn, uk_swrand_randr);
+	return randn;
+}
+#define LWIP_RAND() isolated_rand()
 
 /* compiler hints for packing lwip's structures */
 #define PACK_STRUCT_FIELD(_x)  _x

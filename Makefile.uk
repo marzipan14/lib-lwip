@@ -67,7 +67,7 @@ $(eval $(call uknetdev_scratch_mem,$(CONFIG_LWIP_UKNETDEV_SCRATCH)))
 ################################################################################
 # Library flags
 ################################################################################
-LIBLWIP_CFLAGS-y += -Wno-type-limits -Wno-unused-parameter
+LIBLWIP_CFLAGS-y += -Wno-type-limits -Wno-unused-parameter $(LIBLWIP_CFLAGS_EXTRA)
 LIBLWIP_CFLAGS-$(CONFIG_LWIP_DEBUG) += -DUK_DEBUG
 LIBLWIP_CFLAGS-y   += -D__IN_LIBLWIP__
 LIBLWIP_CXXFLAGS-y += -D__IN_LIBLWIP__
@@ -121,7 +121,7 @@ LIBLWIP_SRCS-y += $(LIBLWIP_EXTRACTED)/api/netdb.c
 LIBLWIP_SRCS-y += $(LIBLWIP_EXTRACTED)/api/netifapi.c
 LIBLWIP_SRCS-y += $(LIBLWIP_EXTRACTED)/api/tcpip.c
 LIBLWIP_SRCS-y += $(LIBLWIP_EXTRACTED)/api/if_api.c
-LIBLWIP_SRCS-$(CONFIG_LWIP_SOCKET) += $(LIBLWIP_EXTRACTED)/api/sockets.c
+# LIBLWIP_SRCS-$(CONFIG_LWIP_SOCKET) += $(LIBLWIP_EXTRACTED)/api/sockets.c
 
 ################################################################################
 # NETIFs

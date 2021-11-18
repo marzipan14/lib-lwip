@@ -34,6 +34,7 @@
  */
 
 #include <uk/config.h>
+#include <flexos/isolation.h>
 #include "lwip/opt.h"
 #include "lwip/tcpip.h"
 #include "lwip/init.h"
@@ -47,64 +48,102 @@
 #include <uk/netdev_core.h>
 #include "netif/uknetdev.h"
 #include <uk/init.h>
+#include <uk/alloc.h>
+#include <string.h> /*strcpy*/
 
 #if LWIP_NETIF_EXT_STATUS_CALLBACK && CONFIG_LWIP_NETIF_STATUS_PRINT
 #include <stdio.h>
 
+/* FIXME FLEXOS: do we really need to disable optimizations here? */
+#pragma GCC push_options
+#pragma GCC optimize("O0")
 static void _netif_status_print(struct netif *nf, netif_nsc_reason_t reason,
 				const netif_ext_callback_args_t *args)
 {
-	if (reason & LWIP_NSC_NETIF_ADDED)
-		printf("%c%c%u: Added\n",
+	char str_ip4_addr[17] __attribute__((flexos_whitelist));
+	char str_ip4_mask[17] __attribute__((flexos_whitelist));
+	char str_ip4_gw[17] __attribute__((flexos_whitelist));
+
+	if (reason & LWIP_NSC_NETIF_ADDED) {
+		flexos_gate(libc, printf, FLEXOS_SHARED_LITERAL("%c%c%u: Added\n"),
 		       nf->name[0], nf->name[1], nf->num);
-	if (reason & LWIP_NSC_NETIF_REMOVED)
-		printf("%c%c%u: Removed\n",
+	}
+	if (reason & LWIP_NSC_NETIF_REMOVED) {
+		flexos_gate(libc, printf, FLEXOS_SHARED_LITERAL("%c%c%u: Removed\n"),
 		       nf->name[0], nf->name[1], nf->num);
-	if (reason & LWIP_NSC_LINK_CHANGED)
-		printf("%c%c%u: Link is %s\n",
+	}
+	if (reason & LWIP_NSC_LINK_CHANGED) {
+		char *state = args->link_changed.state ? FLEXOS_SHARED_LITERAL("up") : FLEXOS_SHARED_LITERAL("down");
+		flexos_gate(libc, printf, FLEXOS_SHARED_LITERAL("%c%c%u: Link is %s\n"),
 		       nf->name[0], nf->name[1], nf->num,
-		       args->link_changed.state ? "up" : "down");
-	if (reason & LWIP_NSC_STATUS_CHANGED)
-		printf("%c%c%u: Interface is %s\n",
+		       state);
+	}
+	if (reason & LWIP_NSC_STATUS_CHANGED) {
+		char *state = args->link_changed.state ? FLEXOS_SHARED_LITERAL("up") : FLEXOS_SHARED_LITERAL("down");
+		flexos_gate(libc, printf, FLEXOS_SHARED_LITERAL("%c%c%u: Interface is %s\n"),
 		       nf->name[0], nf->name[1], nf->num,
-		       args->status_changed.state ? "up" : "down");
+		       state);
+	}
 
 #if LWIP_IPV4
 	if ((reason & LWIP_NSC_IPV4_SETTINGS_CHANGED)
 	    || (reason & LWIP_NSC_IPV4_ADDRESS_CHANGED)
 	    || (reason & LWIP_NSC_IPV4_NETMASK_CHANGED)
 	    || (reason & LWIP_NSC_IPV4_GATEWAY_CHANGED)) {
-		char str_ip4_addr[17];
-		char str_ip4_mask[17];
-		char str_ip4_gw[17];
-
 		ipaddr_ntoa_r(&nf->ip_addr, str_ip4_addr, sizeof(str_ip4_addr));
 		ipaddr_ntoa_r(&nf->netmask, str_ip4_mask, sizeof(str_ip4_mask));
 		ipaddr_ntoa_r(&nf->gw,      str_ip4_gw,   sizeof(str_ip4_gw));
 
-		printf("%c%c%u: Set IPv4 address %s mask %s gw %s\n",
+/* Commented as the number of parameters exceeds 6.
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv4 address %s mask %s gw %s\n"),
 		       nf->name[0], nf->name[1], nf->num,
 		       str_ip4_addr, str_ip4_mask, str_ip4_gw);
+*/
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv4 address %s mask %s\n"),
+		       nf->name[0], nf->name[1], nf->num,
+		       str_ip4_addr, str_ip4_mask);
 	}
 #endif /* LWIP_IPV4 */
 
 #if LWIP_IPV6
-	if (reason & LWIP_NSC_IPV6_SET)
-		printf("%c%c%u: Set IPv6 address %"__PRIs8": %s (state %"__PRIu8")\n",
+	if (reason & LWIP_NSC_IPV6_SET) {
+/* Commented as the number of parameters exceeds 6.
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv6 address %d: %s (state %d)\n"),
 		       nf->name[0], nf->name[1], nf->num,
 		       args->ipv6_set.addr_index,
 		       ipaddr_ntoa(&nf->ip6_addr[args->ipv6_set.addr_index]),
 		       nf->ip6_addr_state[args->ipv6_set.addr_index]);
-	if (reason & LWIP_NSC_IPV6_ADDR_STATE_CHANGED)
-		printf("%c%c%u: Set IPv6 address %"__PRIs8": %s (state %"__PRIu8")\n",
+*/
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv6 address %d: %s\n"),
+		       nf->name[0], nf->name[1], nf->num,
+		       args->ipv6_set.addr_index,
+		       ipaddr_ntoa(&nf->ip6_addr[args->ipv6_set.addr_index]));
+	}
+	if (reason & LWIP_NSC_IPV6_ADDR_STATE_CHANGED) {
+/* Commented as the number of parameters exceeds 6.
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv6 address %d: %s (state %d)\n"),
 		       nf->name[0], nf->name[1], nf->num,
 		       args->ipv6_set.addr_index,
 		       ipaddr_ntoa(&nf->ip6_addr[
 				     args->ipv6_addr_state_changed.addr_index]),
 		       nf->ip6_addr_state[
 				     args->ipv6_addr_state_changed.addr_index]);
+*/
+		flexos_gate(libc, printf,
+		       FLEXOS_SHARED_LITERAL("%c%c%u: Set IPv6 address %d: %s\n"),
+		       nf->name[0], nf->name[1], nf->num,
+		       args->ipv6_set.addr_index,
+		       ipaddr_ntoa(&nf->ip6_addr[
+				     args->ipv6_addr_state_changed.addr_index]));
+	}
 #endif /* LWIP_IPV6 */
 }
+#pragma GCC pop_options
 
 NETIF_DECLARE_EXT_CALLBACK(netif_status_print)
 #endif /* LWIP_NETIF_EXT_STATUS_CALLBACK && CONFIG_LWIP_NETIF_STATUS_PRINT */
@@ -120,24 +159,43 @@ void sys_init(void)
 }
 
 #if !CONFIG_LWIP_NOTHREADS
-static struct uk_semaphore _lwip_init_sem;
+static struct uk_semaphore _lwip_init_sem __attribute__((flexos_whitelist));
 
 static void _lwip_init_done(void *arg __unused)
 {
-	uk_semaphore_up(&_lwip_init_sem);
+	flexos_gate(uklock, uk_semaphore_up, &_lwip_init_sem);
 }
 #endif /* !CONFIG_LWIP_NOTHREADS */
+
+#ifndef CONFIG_LIBFLEXOS_VMEPT
+static
+#endif
+void uk_netdev_einfo_get_with_copy(struct uk_netdev *dev,
+	enum uk_netdev_einfo_type einfo, char **strcfg)
+{
+	char *_tmp = uk_netdev_einfo_get(dev, einfo);
+	if (!_tmp) {
+		*strcfg = NULL;
+		return;
+	}
+	/* unfortunately we need to copy the string or share... */
+	if (*strcfg) uk_free(flexos_shared_alloc, *strcfg);
+	*strcfg = uk_malloc(flexos_shared_alloc, strlen(_tmp) + 1);
+	strcpy(*strcfg, _tmp);
+}
 
 /*
  * This function initializing the lwip network stack
  */
-static int liblwip_init(void)
+__attribute__((libukboot_callback))
+int liblwip_init(void)
 {
 #if CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE
 	unsigned int devid;
 	struct uk_netdev *dev;
 	struct netif *nf;
-	const char  __maybe_unused *strcfg;
+	const char  __maybe_unused **strcfg = uk_malloc(flexos_shared_alloc, sizeof(char *));
+	*strcfg = NULL;
 	uint16_t  __maybe_unused int16cfg;
 	int is_first_nf;
 #if LWIP_IPV4
@@ -150,9 +208,9 @@ static int liblwip_init(void)
 #endif /* LWIP_IPV4 */
 #endif /* CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE */
 
-	uk_pr_info("Initializing lwip\n");
+	flexos_gate(ukdebug, uk_pr_info, FLEXOS_SHARED_LITERAL("Initializing lwip\n"));
 #if !CONFIG_LWIP_NOTHREADS
-	uk_semaphore_init(&_lwip_init_sem, 0);
+	flexos_gate(libuklock, uk_semaphore_init, &_lwip_init_sem, 0);
 #endif /* !CONFIG_LWIP_NOTHREADS */
 
 #if CONFIG_LWIP_NOTHREADS
@@ -161,7 +219,7 @@ static int liblwip_init(void)
 	tcpip_init(_lwip_init_done, NULL);
 
 	/* Wait until stack is booted */
-	uk_semaphore_down(&_lwip_init_sem);
+	flexos_gate(uklock, uk_semaphore_down, &_lwip_init_sem);
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if LWIP_NETIF_EXT_STATUS_CALLBACK && CONFIG_LWIP_NETIF_STATUS_PRINT
@@ -171,18 +229,26 @@ static int liblwip_init(void)
 
 #if CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE
 	is_first_nf = 1;
+	unsigned int netdev_count;
 
-	for (devid = 0; devid < uk_netdev_count(); ++devid) {
-		dev = uk_netdev_get(devid);
+	flexos_gate_r(uknetdev, netdev_count, uk_netdev_count);
+
+	for (devid = 0; devid < netdev_count; ++devid) {
+		enum uk_netdev_state netdev_state;
+		flexos_gate_r(uknetdev, dev, uk_netdev_get, devid);
 		if (!dev)
 			continue;
-		if (uk_netdev_state_get(dev) != UK_NETDEV_UNCONFIGURED) {
-			uk_pr_info("Skipping to add network device %u to lwIP: Not in unconfigured state\n",
+
+		flexos_gate_r(uknetdev, netdev_state, uk_netdev_state_get, dev);
+
+		if (netdev_state != UK_NETDEV_UNCONFIGURED) {
+			flexos_gate(ukdebug, uk_pr_info, FLEXOS_SHARED_LITERAL(
+				"Skipping to add network device %u to lwIP: Not in unconfigured state\n"),
 				    devid);
 			continue;
 		}
 
-		uk_pr_info("Attach network device %u to lwIP...\n",
+		flexos_gate(ukdebug, uk_pr_info, FLEXOS_SHARED_LITERAL("Attach network device %u to lwIP...\n"),
 			   devid);
 
 #if LWIP_IPV4
@@ -191,11 +257,12 @@ static int liblwip_init(void)
 		gw4_arg   = NULL;
 
 		/* IP */
-		strcfg = uk_netdev_einfo_get(dev, UK_NETDEV_IPV4_ADDR_STR);
-		if (strcfg) {
-			if (ip4addr_aton(strcfg, &ip4) != 1) {
-				uk_pr_err("Error converting IP address: %s\n",
-						strcfg);
+		flexos_gate(vfscore, uk_netdev_einfo_get_with_copy, dev, UK_NETDEV_IPV4_ADDR_STR, strcfg);
+
+		if (*strcfg) {
+			if (ip4addr_aton(*strcfg, &ip4) != 1) {
+				flexos_gate(ukdebug, uk_pr_err, FLEXOS_SHARED_LITERAL("Error converting IP address: %s\n"),
+						*strcfg);
 				goto no_conf;
 			}
 		} else
@@ -203,11 +270,12 @@ static int liblwip_init(void)
 		ip4_arg = &ip4;
 
 		/* mask */
-		strcfg = uk_netdev_einfo_get(dev, UK_NETDEV_IPV4_MASK_STR);
-		if (strcfg) {
-			if (ip4addr_aton(strcfg, &mask4) != 1) {
-				uk_pr_err("Error converting net mask: %s\n",
-						strcfg);
+		flexos_gate(vfscore, uk_netdev_einfo_get_with_copy, dev, UK_NETDEV_IPV4_MASK_STR, strcfg);
+
+		if (*strcfg) {
+			if (ip4addr_aton(*strcfg, &mask4) != 1) {
+				flexos_gate(ukdebug, uk_pr_err, FLEXOS_SHARED_LITERAL("Error converting net mask: %s\n"),
+						*strcfg);
 				goto no_conf;
 			}
 		} else
@@ -216,11 +284,12 @@ static int liblwip_init(void)
 		mask4_arg = &mask4;
 
 		/* gateway */
-		strcfg = uk_netdev_einfo_get(dev, UK_NETDEV_IPV4_GW_STR);
-		if (strcfg) {
-			if (ip4addr_aton(strcfg, &gw4) != 1) {
-				uk_pr_err("Error converting gateway: %s\n",
-						strcfg);
+		flexos_gate(vfscore, uk_netdev_einfo_get_with_copy, dev, UK_NETDEV_IPV4_GW_STR, strcfg);
+
+		if (*strcfg) {
+			if (ip4addr_aton(*strcfg, &gw4) != 1) {
+				flexos_gate(ukdebug, uk_pr_err, FLEXOS_SHARED_LITERAL("Error converting gateway: %s\n"),
+						*strcfg);
 				goto no_conf;
 			}
 			gw4_arg = &gw4;
@@ -236,14 +305,14 @@ no_conf:
 		nf = uknetdev_addif(dev);
 #endif /* LWIP_IPV4 */
 		if (!nf) {
-			uk_pr_err("Failed to attach network device %u to lwIP\n",
+			flexos_gate(ukdebug, uk_pr_err, FLEXOS_SHARED_LITERAL("Failed to attach network device %u to lwIP\n"),
 				  devid);
 			continue;
 		}
 
 		/* Declare the first network device as default interface */
 		if (is_first_nf) {
-			uk_pr_info("%c%c%u: Set as default interface\n",
+			flexos_gate(ukdebug, uk_pr_info, FLEXOS_SHARED_LITERAL("%c%c%u: Set as default interface\n"),
 				   nf->name[0], nf->name[1], nf->num);
 			netif_set_default(nf);
 			is_first_nf = 0;
@@ -252,13 +321,21 @@ no_conf:
 
 #if LWIP_IPV4 && LWIP_DHCP
 		if (!ip4_arg) {
-			uk_pr_info("%c%c%u: DHCP configuration (background)...\n",
+			flexos_gate(ukdebug, uk_pr_info, FLEXOS_SHARED_LITERAL("%c%c%u: DHCP configuration (background)...\n"),
 				   nf->name[0], nf->name[1], nf->num);
 			dhcp_start(nf);
 		}
 #endif /* LWIP_IPV4 && LWIP_DHCP */
 	}
 #endif /* CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE */
+#if CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE
+	uk_free(flexos_shared_alloc, strcfg);
+#endif /* CONFIG_LWIP_UKNETDEV && CONFIG_LWIP_AUTOIFACE */
 	return 0;
 }
+/* FOLKS! THIS IS BAD! TODO FIXME FLEXOS! This was done for the
+ * ASPLOS deadline, because we don't have time to ensure that initcalls
+ * land into the right binary. Adress this later. */
+#if !(CONFIG_LIBFLEXOS_VMEPT && FLEXOS_VMEPT_COMP_ID != 0)
 uk_lib_initcall(liblwip_init);
+#endif

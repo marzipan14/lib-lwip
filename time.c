@@ -31,11 +31,15 @@
  * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 
+#include <flexos/isolation.h>
 #include <uk/arch/time.h>
 #include <uk/plat/time.h>
 #include <lwip/sys.h>
 
 u32_t sys_now(void)
 {
-	return (u32_t) ukarch_time_nsec_to_msec(ukplat_monotonic_clock());
+	__nsec time;
+	flexos_gate_r(ukplat, time, ukplat_monotonic_clock);
+	/* no need to isolate ukarch_time_nsec_to_msec, it's just a calculation */
+	return (u32_t) ukarch_time_nsec_to_msec(time);
 }
