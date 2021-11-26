@@ -89,12 +89,18 @@ do {						\
 			errcode);		\
 } while (0)					\
 
+static int _SOCK_NET_GET_ERRNO(void)
+{
+	return errno;
+}
+
 static inline int SOCK_NET_GET_ERRNO(void)
 {
-	int * temp_errno;
-	flexos_gate_r(libc, temp_errno, __errno);
-	return *temp_errno;
+	int temp_errno;
+	flexos_gate_r(libc, temp_errno, _SOCK_NET_GET_ERRNO);
+	return temp_errno;
 }
+
 
 static int sock_net_close(struct vnode *s_vnode,
 			  struct vfscore_file *vfscore_file);
