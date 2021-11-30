@@ -1004,6 +1004,12 @@ char *if_indextoname(unsigned int ifindex, char *ifname)
 #define LWIP_NETCONN 0
 #endif
 
+#if CONFIG_LIBFLEXOS_NONE
+#define API_SELECT_CB_VAR_REF(name)               API_VAR_REF(name)
+#define API_SELECT_CB_VAR_DECLARE(name)           API_VAR_DECLARE(struct lwip_select_cb, name)
+#define API_SELECT_CB_VAR_ALLOC(name, retblock)   API_VAR_ALLOC_EXT(struct lwip_select_cb, MEMP_SELECT_CB, name, retblock)
+#define API_SELECT_CB_VAR_FREE(name)              API_VAR_FREE(MEMP_SELECT_CB, name)
+#else
 #define API_SELECT_CB_VAR_REF(name)              (*(name))
 #define API_SELECT_CB_VAR_DECLARE(name)           struct lwip_select_cb * (name)
 //#define API_SELECT_CB_VAR_ALLOC(name, retblock)   API_VAR_ALLOC_EXT(struct lwip_select_cb, MEMP_SELECT_CB, name, retblock)
@@ -1016,6 +1022,7 @@ do { \
 } while (0)
 //#define API_SELECT_CB_VAR_FREE(name)              API_VAR_FREE(MEMP_SELECT_CB, name)
 #define API_SELECT_CB_VAR_FREE(name) flexos_free_whitelist(name)
+#endif
 
 #if LWIP_IPV4
 #define IP4ADDR_PORT_TO_SOCKADDR(sin, ipaddr, port) do { \
