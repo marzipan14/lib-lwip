@@ -75,6 +75,13 @@
 #include <lwip/inet_chksum.h>
 #endif
 
+/* TODO investigate if this distinction is worth it, it should have no effect! */
+#if CONFIG_LIBFLEXOS_NONE
+#define SOCK_NET_SET_ERRNO(errcode) (errno = -(errcode))
+#define _SOCK_NET_SET_ERRNO(errcode) (errno = -(errcode))
+#define SOCK_NET_GET_ERRNO(errcode) (errno)
+#define _SOCK_NET_GET_ERRNO(errcode) (errno)
+#else
 #ifndef CONFIG_LIBFLEXOS_VMEPT
 static inline
 #endif
@@ -100,6 +107,7 @@ static inline int SOCK_NET_GET_ERRNO(void)
 	flexos_gate_r(libc, temp_errno, _SOCK_NET_GET_ERRNO);
 	return temp_errno;
 }
+#endif
 
 
 static int sock_net_close(struct vnode *s_vnode,
