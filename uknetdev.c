@@ -331,7 +331,11 @@ void uknetdev_poll(struct netif *nf)
 	UK_ASSERT(dev);
 
 	/* do not go through gate (hence the '_') */
+#if CONFIG_LIBFLEXOS_NONE
+	uknetdev_input(dev, 0, nf);
+#else
 	__uknetdev_input(dev, 0, nf);
+#endif
 }
 
 #ifdef CONFIG_LWIP_NOTHREADS
