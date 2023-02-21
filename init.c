@@ -56,8 +56,7 @@
 
 #if CONFIG_LIBFLEXOS_INTELPKU
 /* FIXME FLEXOS: do we really need to disable optimizations here? */
-#pragma GCC push_options
-#pragma GCC optimize("O0")
+#pragma clang attribute push(__attribute__((optnone)), apply_to = any(function)) 
 #endif
 static void _netif_status_print(struct netif *nf, netif_nsc_reason_t reason,
 				const netif_ext_callback_args_t *args)
@@ -146,7 +145,7 @@ static void _netif_status_print(struct netif *nf, netif_nsc_reason_t reason,
 #endif /* LWIP_IPV6 */
 }
 #if CONFIG_LIBFLEXOS_INTELPKU
-#pragma GCC pop_options
+#pragma clang attribute pop 
 #endif
 
 NETIF_DECLARE_EXT_CALLBACK(netif_status_print)

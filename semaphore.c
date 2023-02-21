@@ -92,8 +92,7 @@ static inline __nsec sys_arch_sem_wait_helper(volatile struct uk_semaphore *s) {
  * (i.e., it was already signaled), the function may return zero.
  */
 #if CONFIG_LIBFLEXOS_INTELPKU
-#pragma GCC push_options
-#pragma GCC optimize("O0")
+#pragma clang attribute push(__attribute__((optnone)), apply_to = any(function)) 
 #endif
 u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
 {
@@ -113,5 +112,5 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
 	return (u32_t) ukarch_time_nsec_to_msec(nsret);
 }
 #if CONFIG_LIBFLEXOS_INTELPKU
-#pragma GCC pop_options
+#pragma clang attribute pop 
 #endif
